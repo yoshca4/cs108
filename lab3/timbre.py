@@ -16,5 +16,5 @@ for wave, name in [
     (sawtooth_wave, "sawtooth"),
     (triangle_wave, "triangle"),
 ]:
-    show(wave, name)
     play(wave)
+    show(wave, name)
