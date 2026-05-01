@@ -10,3 +10,12 @@
 # 3A
 1. when the mouse is pressed particles are spawned and a random vector is generated with randint this is combined with a number for gravity as well to result in an arc away from the mouse
 # 3B
+i can't find anything that would limit the number of particles alive other than the decay rate but that is random so a maximum can't be determined easily.
+# 3C
+with a low alpha the trail gets longer and leaves a faint after image that persists for a very long time.
+# 4A 
+left mouse button spawns particle like before and now the right button attracts them
+# 4B 
+the color modes didn't work(I'm finishing this on friday so I couldn't ask for help)
+# 4C
+It looks like the key presses in general didn't want to work with my code
