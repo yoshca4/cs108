@@ -1,0 +1,11 @@
+[project]
+name = "lab5"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyopengl>=3.1.10",
+    "pyqt6>=6.11.0",
+    "vispy>=0.16.1",
+]
