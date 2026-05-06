@@ -2,58 +2,113 @@ from vispy import app, scene
 import numpy as np
 
 canvas = scene.SceneCanvas(
-    title='Nebula',
-    bgcolor='#000008',
-    size=(900, 600),
+    title='Quantum Field Bloom',
+    bgcolor="#000000",
+    size=(1000, 700),
     show=True
 )
 
 view = canvas.central_widget.add_view()
-view.camera = scene.TurntableCamera(fov=60, distance=8, elevation=15)
+view.camera = scene.TurntableCamera(fov=55, distance=6, elevation=30)
 
-N = 4000
+# -------------------------------------------------
+# GRID POINT CLOUD (dense 3D field)
+# -------------------------------------------------
+res = 55
+lin = np.linspace(-2, 2, res)
 
-pos = (np.random.randn(N, 3) * 0.1).astype(np.float32)
-vel = (np.random.randn(N, 3) * 0.03).astype(np.float32)  # faster
+x, y, z = np.meshgrid(lin, lin, lin)
+pos0 = np.column_stack([x.ravel(), y.ravel(), z.ravel()]).astype(np.float32)
 
-# Color by speed
-speed = np.linalg.norm(vel, axis=1)
-speed_norm = (speed - speed.min()) / (speed.max() - speed.min())
+N = len(pos0)
 
+# -------------------------------------------------
+# VISUALS
+# -------------------------------------------------
 colors = np.zeros((N, 4), dtype=np.float32)
-colors[:, 0] = speed_norm
-colors[:, 2] = 1 - speed_norm
-colors[:, 1] = 0.2
-colors[:, 3] = 0.7
 
 markers = scene.visuals.Markers(
-    pos=pos,
-    size=3,
+    pos=pos0,
+    size=2,
     face_color=colors,
     edge_width=0,
     parent=view.scene
 )
 
+markers.set_gl_state('translucent', blend=True, depth_test=False)
+
+# -------------------------------------------------
+# TIME STATE
+# -------------------------------------------------
+t = 0.0
+
+# -------------------------------------------------
+# FIELD FUNCTION (this is the "physics")
+# -------------------------------------------------
+def field(p, t):
+    x, y, z = p[:, 0], p[:, 1], p[:, 2]
+
+    r = np.sqrt(x**2 + y**2 + z**2)
+
+    # layered wave interference (key effect)
+    f = (
+        np.sin(3*x + t) +
+        np.cos(3*y - t * 0.8) +
+        np.sin(3*z + t * 1.2)
+    )
+
+    # radial collapse/expansion wave
+    f += np.sin(r * 5 - t * 2)
+
+    # vortex twist
+    f += 0.5 * np.sin(x*y + t)
+
+    return f
+
+# -------------------------------------------------
+# COLOR MAPPING (energy visualization)
+# -------------------------------------------------
+def colorize(f):
+    f = (f - f.min()) / (f.max() - f.min() + 1e-6)
+
+    c = np.zeros((N, 4), dtype=np.float32)
+
+    c[:, 0] = f**2.2
+    c[:, 1] = np.sin(f * 3.14)**2
+    c[:, 2] = 1 - f
+
+    c[:, 3] = 0.15 + f * 0.85
+
+    return np.clip(c, 0, 1)
+
+# -------------------------------------------------
+# ANIMATION
+# -------------------------------------------------
 def on_timer(event):
-    global pos
+    global t
+    t += 0.03
 
-    # move particles
-    pos += vel
+    f = field(pos0, t)
 
-    # gentle swirl (this makes it feel like a nebula)
-    theta = 0.01
-    cos_t, sin_t = np.cos(theta), np.sin(theta)
-    x = pos[:, 0].copy()
-    y = pos[:, 1].copy()
-    pos[:, 0] = cos_t * x - sin_t * y
-    pos[:, 1] = sin_t * x + cos_t * y
+    # deform space itself (this is what makes it “alive”)
+    deformation = 0.3 * np.sin(f * 2 + t)
 
-    # wrap
-    mask = np.abs(pos) > 5
-    pos[mask] *= -0.5
+    pos = pos0.copy()
+    pos[:, 0] += deformation * np.sin(t + pos[:, 1])
+    pos[:, 1] += deformation * np.cos(t + pos[:, 2])
+    pos[:, 2] += deformation * np.sin(t + pos[:, 0])
 
-    # update GPU
-    markers.set_data(pos=pos, face_color=colors, size=3)
+    markers.set_data(
+        pos=pos,
+        face_color=colorize(f),
+        size=2
+    )
+
+    # camera slowly drifts through field
+    view.camera.azimuth += 0.2
+    view.camera.elevation = 30 + 10 * np.sin(t * 0.5)
+
+    canvas.update()
 
 timer = app.Timer(1/60, connect=on_timer, start=True)
 
