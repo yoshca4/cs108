@@ -1,66 +1,79 @@
-import mido
-from mido import MidiFile, MidiTrack, Message
+import numpy as np
 import pygame
 import time
-import random
-import os
+import threading
 
-SR      = 44100
-TEMPO   = 500000          # microseconds per beat = 120 BPM
-TICKS   = 480             # ticks per beat
+SR = 44100
 
-def play_midi(path):
-    pygame.mixer.init()
-    pygame.mixer.music.load(path)
-    pygame.mixer.music.play()
-    # Wait for playback to finish
-    clock = pygame.time.Clock()
-    while pygame.mixer.music.get_busy():
-        clock.tick(10)
+def bjorklund(beats, slots):
+    """Return a Euclidean rhythm as a list of 0s and 1s."""
+    if beats == 0:
+        return [0] * slots
+    if beats == slots:
+        return [1] * slots
+
+    pattern    = [[1]] * beats + [[0]] * (slots - beats)
+    remainder  = slots - beats
+
+    while remainder > 1:
+        times = min(len(pattern) - remainder, remainder)
+        for i in range(times):
+            pattern[i] = pattern[i] + pattern[-(i+1)]
+        pattern = pattern[:len(pattern)-times]
+        remainder = len(pattern) - times
+        if remainder <= 0:
+            break
+
+    return [x for group in pattern for x in group]
+
+def make_click(freq, duration=0.05, sr=SR):
+    """Simple sine burst for a drum sound."""
+    t    = np.linspace(0, duration, int(sr * duration))
+    wave = np.sin(2 * np.pi * freq * t) * np.exp(-t * 40)
+    return (wave * 32767).astype(np.int16)
+
+def play_euclidean(beats, slots, bpm=120, bars=4, freq=200):
+    """Play a Euclidean rhythm."""
+    pattern  = bjorklund(beats, slots)
+    step_dur = 60 / (bpm * slots / 4)   # duration of one slot in seconds
+
+    pygame.mixer.init(frequency=SR, size=-16, channels=1, buffer=512)
+    click = make_click(freq)
+    sound = pygame.sndarray.make_sound(click)
+
+    print(f"E({beats},{slots}): {pattern}")
+
+    for _ in range(bars):
+        for hit in pattern:
+            if hit:
+                sound.play()
+            time.sleep(step_dur)
+
     pygame.mixer.quit()
 
-def note_on(track, note, velocity, time=0):
-    track.append(Message('note_on',  note=note, velocity=velocity, time=time))
+def play_layer(beats, slots, bpm, bars, freq):
+    play_euclidean(beats, slots, bpm=bpm, bars=bars, freq=freq)
 
-def note_off(track, note, time):
-    track.append(Message('note_off', note=note, velocity=0,        time=time))
+threads = [
+    threading.Thread(target=play_layer, args=(3, 8,  120, 8, 80)),   # kick
+    threading.Thread(target=play_layer, args=(4, 8,  120, 8, 300)),  # snare
+    threading.Thread(target=play_layer, args=(7, 16, 120, 8, 800)),  # hihat
+]
 
-def add_note(track, note, duration_ticks, velocity=80, gap=10):
-    """Add a note_on then note_off with a small gap."""
-    note_on(track,  note, velocity, time=0)
-    note_off(track, note, time=duration_ticks - gap)
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
 
-# ── Compose ───────────────────────────────────────────────────────────────────
-def compose_scale_melody(scale_notes, length=32, bpm=60):
-    """Walk randomly through a scale."""
-    tempo   = int(60_000_000 / bpm)
-    quarter = TICKS
+# ── Try these classic Euclidean rhythms ───────────────────────────────────────
+# print("Tresillo (3,8) — Cuban son")
+# play_euclidean(3, 8, bpm=120, freq=180)
 
-    mid   = MidiFile(ticks_per_beat=TICKS)
-    track = MidiTrack()
-    mid.tracks.append(track)
-    track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
+# print("Cinquillo (5,8) — Cuban/African")
+# play_euclidean(5, 8, bpm=120, freq=220)
 
-    note = random.choice(scale_notes)
-    for _ in range(length):
-        duration = random.choice([quarter // 2, quarter, quarter * 2])
-        velocity = random.randint(60, 100)
-        add_note(track, note, duration, velocity)
-        # Step up, down, or jump in the scale
-        step = random.choice([-2, -1, -1, 0, 1, 1, 2])
-        idx  = scale_notes.index(note)
-        note = scale_notes[max(0, min(len(scale_notes)-1, idx + step))]
+# print("Bossa nova (3,16) — Brazilian")
+# play_euclidean(3, 16, bpm=100, freq=160)
 
-    mid.save("melody.mid")
-    return "melody.mid"
-
-# A minor pentatonic starting at A3
-A_MINOR_PENTATONIC = [57, 60, 62, 64, 67, 69, 72, 74, 76]
-
-path = compose_scale_melody(A_MINOR_PENTATONIC, length=48, bpm=130)
-
-pygame.mixer.init()
-pygame.mixer.music.load(path)
-pygame.mixer.music.play()
-while pygame.mixer.music.get_busy():
-    pygame.time.Clock().tick(10)
+play_euclidean(4, 4, bpm=120, freq=180)
+play_euclidean(1, 8, bpm=120, freq=180)
