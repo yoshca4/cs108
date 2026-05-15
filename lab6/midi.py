@@ -1,79 +1,82 @@
 import numpy as np
 import pygame
+import mido
+from mido import MidiFile, MidiTrack, Message
 import time
-import threading
 
-SR = 44100
+def life_step(grid):
+    """One step of Conway's Game of Life."""
+    neighbors = sum(
+        np.roll(np.roll(grid, i, 0), j, 1)
+        for i in (-1, 0, 1) for j in (-1, 0, 1)
+        if (i, j) != (0, 0)
+    )
+    return ((neighbors == 3) | (grid & (neighbors == 2))).astype(np.uint8)
 
-def bjorklund(beats, slots):
-    """Return a Euclidean rhythm as a list of 0s and 1s."""
-    if beats == 0:
-        return [0] * slots
-    if beats == slots:
-        return [1] * slots
+def life_to_midi(rows=16, cols=64, bpm=120, seed=42):
+    """
+    Run Game of Life for `cols` steps.
+    Map living cells to MIDI notes in a pentatonic scale.
+    """
+    np.random.seed(seed)
+    grid = (np.random.random((rows, cols)) > 0.5).astype(np.uint8)
 
-    pattern    = [[1]] * beats + [[0]] * (slots - beats)
-    remainder  = slots - beats
+    # Run the automaton
+    frames = [grid.copy()]
+    for _ in range(cols - 1):
+        grid = life_step(grid)
+        frames.append(grid.copy())
 
-    while remainder > 1:
-        times = min(len(pattern) - remainder, remainder)
-        for i in range(times):
-            pattern[i] = pattern[i] + pattern[-(i+1)]
-        pattern = pattern[:len(pattern)-times]
-        remainder = len(pattern) - times
-        if remainder <= 0:
-            break
+    # Pentatonic scale — maps row index to MIDI note
+    pentatonic = [60, 62, 64, 67, 69,
+                  72, 74, 76, 79, 81,
+                  84, 86, 88, 91, 93, 96]
+    scale = pentatonic[:rows]
 
-    return [x for group in pattern for x in group]
+    tempo   = int(60_000_000 / bpm)
+    quarter = 480
+    step_t  = quarter // 2    # eighth note per column
 
-def make_click(freq, duration=0.05, sr=SR):
-    """Simple sine burst for a drum sound."""
-    t    = np.linspace(0, duration, int(sr * duration))
-    wave = np.sin(2 * np.pi * freq * t) * np.exp(-t * 40)
-    return (wave * 32767).astype(np.int16)
+    mid   = MidiFile(ticks_per_beat=quarter)
+    track = MidiTrack()
+    mid.tracks.append(track)
+    track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
 
-def play_euclidean(beats, slots, bpm=120, bars=4, freq=200):
-    """Play a Euclidean rhythm."""
-    pattern  = bjorklund(beats, slots)
-    step_dur = 60 / (bpm * slots / 4)   # duration of one slot in seconds
+    prev = np.zeros((rows, cols), dtype=np.uint8)
 
-    pygame.mixer.init(frequency=SR, size=-16, channels=1, buffer=512)
-    click = make_click(freq)
-    sound = pygame.sndarray.make_sound(click)
+    for col, frame in enumerate(frames):
+        for row in range(rows):
+            note = scale[row]
+            vel  = np.random.randint(50, 90)
+            if frame[row, col % cols] and not prev[row, col % cols]:
+                track.append(Message('note_on',  note=note,
+                                     velocity=vel, time=0))
+                track.append(Message('note_off', note=note,
+                                     velocity=0,  time=step_t))
+        prev = frame.copy()
 
-    print(f"E({beats},{slots}): {pattern}")
+    mid.save("life_music.mid")
 
-    for _ in range(bars):
-        for hit in pattern:
-            if hit:
-                sound.play()
-            time.sleep(step_dur)
+    # Visualize the grid evolution
+    import matplotlib.pyplot as plt
+    arr = np.array(frames).T
+    plt.figure(figsize=(14, 4))
+    plt.imshow(arr[:, :, 0] if arr.ndim == 3 else
+               np.array([f[:,0] for f in frames]).T,
+               cmap='plasma', aspect='auto', origin='lower')
+    plt.xlabel("Time step (column)")
+    plt.ylabel("Pitch (row)")
+    plt.title("Game of Life → Music  |  bright = alive = note plays")
+    plt.colorbar(label="alive")
+    plt.tight_layout()
+    plt.show()
 
-    pygame.mixer.quit()
+    return "life_music.mid"
 
-def play_layer(beats, slots, bpm, bars, freq):
-    play_euclidean(beats, slots, bpm=bpm, bars=bars, freq=freq)
+path = life_to_midi(rows=16, cols=64, bpm=110, seed=7)
 
-threads = [
-    threading.Thread(target=play_layer, args=(3, 8,  120, 8, 80)),   # kick
-    threading.Thread(target=play_layer, args=(4, 8,  120, 8, 300)),  # snare
-    threading.Thread(target=play_layer, args=(7, 16, 120, 8, 800)),  # hihat
-]
-
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-
-# ── Try these classic Euclidean rhythms ───────────────────────────────────────
-# print("Tresillo (3,8) — Cuban son")
-# play_euclidean(3, 8, bpm=120, freq=180)
-
-# print("Cinquillo (5,8) — Cuban/African")
-# play_euclidean(5, 8, bpm=120, freq=220)
-
-# print("Bossa nova (3,16) — Brazilian")
-# play_euclidean(3, 16, bpm=100, freq=160)
-
-play_euclidean(4, 4, bpm=120, freq=180)
-play_euclidean(1, 8, bpm=120, freq=180)
+pygame.mixer.init()
+pygame.mixer.music.load(path)
+pygame.mixer.music.play()
+while pygame.mixer.music.get_busy():
+    pygame.time.Clock().tick(10)
