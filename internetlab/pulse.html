@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HN Pulse</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #0d0f14;
+  --bg2:      #141720;
+  --surface:  #1a1e2a;
+  --border:   rgba(255,255,255,0.08);
+  --text:     #e2e4ec;
+  --muted:    #7a7f96;
+  --orange:   #f97316;
+  --blue:     #6c8fff;
+  --purple:   #a78bfa;
+  --green:    #34d399;
+  --red:      #f87171;
+  --amber:    #fbbf24;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'SF Mono','Fira Code',monospace;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+#toolbar h1 { font-size: 13px; font-weight: 600; color: var(--orange); letter-spacing:.08em; text-transform:uppercase; }
+
+select, button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  outline: none;
+}
+button { font-weight: 700; letter-spacing:.05em; text-transform:uppercase; }
+button.primary { background: var(--orange); color: #0d0f14; border-color: var(--orange); }
+button:hover { opacity: .85; }
+button:disabled { opacity: .3; cursor: not-allowed; }
+
+label { font-size: 12px; color: var(--muted); }
+#stats { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+#main { display: flex; flex: 1; overflow: hidden; }
+
+#plot-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#chart-area { flex: 1; position: relative; }
+svg#scatter { width: 100%; height: 100%; display: block; }
+
+.axis path, .axis line { stroke: var(--border); }
+.axis text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.axis-label { fill: var(--muted); font-size: 11px; font-family: inherit; }
+
+.quadrant-label {
+  font-size: 10px;
+  fill: rgba(255,255,255,0.12);
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+
+.dot {
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.dot:hover { opacity: .85; }
+.dot.selected { stroke: #fff; stroke-width: 2; }
+.dot.dimmed { opacity: .2; }
+
+.story-label {
+  font-size: 10px;
+  fill: var(--muted);
+  pointer-events: none;
+  font-family: inherit;
+}
+
+.diagonal { stroke: rgba(255,255,255,0.35); stroke-dasharray: 6 4; stroke-width: 1.5; }
+
+#sidebar {
+  width: 300px;
+  background: var(--bg2);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+#sidebar-header {
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+#story-rank {
+  font-size: 10px;
+  color: var(--orange);
+  padding: 10px 16px 0;
+  letter-spacing: .05em;
+}
+#story-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  padding: 6px 16px 0;
+  line-height: 1.4;
+}
+#story-domain {
+  font-size: 11px;
+  color: var(--blue);
+  padding: 4px 16px 0;
+}
+#story-meta {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 16px 0;
+  line-height: 1.8;
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+}
+.meta-row { display: flex; justify-content: space-between; }
+.meta-val { color: var(--text); font-weight: 600; }
+.meta-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+#story-bar-wrap { padding: 12px 16px 0; }
+.bar-label { font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+.bar-track { background: var(--surface); border-radius: 3px; height: 6px; overflow: hidden; margin-bottom: 8px; }
+.bar-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+
+#story-actions {
+  padding: 12px 16px;
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+  flex-shrink: 0;
+}
+#story-actions a, #story-actions button {
+  flex: 1;
+  text-align: center;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 11px;
+  padding: 6px 4px;
+}
+
+#legend {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.legend-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.legend-gradient {
+  height: 10px;
+  width: 60px;
+  border-radius: 2px;
+  background: linear-gradient(to right, #334266, #6c8fff, #f97316);
+  flex-shrink: 0;
+}
+
+#loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(13,15,20,.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  z-index: 10;
+  font-size: 13px;
+  color: var(--muted);
+}
+#loading-overlay.hidden { display: none; }
+.spinner { width: 28px; height: 28px; border: 2px solid var(--border); border-top-color: var(--orange); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#hint { font-size: 11px; color: var(--muted); opacity: .5; padding: 6px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <h1>HN Pulse</h1>
+  <label>Feed:</label>
+  <select id="feed-select">
+    <option value="topstories">Top</option>
+    <option value="newstories">New</option>
+    <option value="beststories">Best</option>
+    <option value="askstories">Ask HN</option>
+    <option value="showstories">Show HN</option>
+  </select>
+  <label>Stories:</label>
+  <select id="count-select">
+    <option value="30">30</option>
+    <option value="50" selected>50</option>
+    <option value="75">75</option>
+  </select>
+  <button class="primary" id="load-btn" onclick="loadStories()">▶ Load</button>
+  <label style="margin-left:8px">Color:</label>
+  <select id="color-select" onchange="recolor()">
+    <option value="age">Age (hours)</option>
+    <option value="score">Score</option>
+    <option value="ratio">Comments/Score ratio</option>
+  </select>
+  <span id="stats"></span>
+</div>
+
+<div id="main">
+  <div id="plot-wrap">
+    <div id="hint">click a dot to see story details · hover for title</div>
+    <div id="chart-area">
+      <svg id="scatter" aria-label="Scatter plot of Hacker News stories by score and comment count"></svg>
+      <div id="loading-overlay">
+        <div class="spinner"></div>
+        <span id="loading-msg">Fetching stories…</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="sidebar">
+    <div id="sidebar-header">Story details</div>
+    <div id="story-rank" style="color:var(--muted)">Select a story</div>
+    <div id="story-title" style="color:var(--muted);font-size:12px;padding-top:8px">Click any dot on the scatter plot to see full details here.</div>
+    <div id="story-domain"></div>
+    <div id="story-meta"></div>
+    <div id="story-bar-wrap"></div>
+    <div id="story-actions" style="border-top:none"></div>
+    <div id="legend">
+      <div class="legend-row"><div class="legend-gradient"></div>Age: young (orange) → old (dark)</div>
+      <div class="legend-row"><span>● size = score rank</span></div>
+      <div class="legend-row"><span>-- dashed line = score equals comments</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const HN = "https://hacker-news.firebaseio.com/v0";
+let stories = [];
+let maxScore = 1, maxComments = 1, maxAge = 1;
+let selectedId = null;
+let colorMode = "age";
+
+const margin = { top: 30, right: 30, bottom: 50, left: 60 };
+let xScale, yScale, colorScale, radiusScale;
+
+function showLoading(on, msg = "Fetching stories…") {
+  document.getElementById("loading-overlay").classList.toggle("hidden", !on);
+  document.getElementById("loading-msg").textContent = msg;
+}
+
+function domainOf(url) {
+  if (!url) return "text";
+  try { return new URL(url).hostname.replace(/^www\./, ""); }
+  catch { return "text"; }
+}
+
+function ageHours(time) {
+  return (Date.now() / 1000 - time) / 3600;
+}
+
+function fmtAge(h) {
+  if (h < 1) return `${Math.round(h * 60)}m ago`;
+  if (h < 24) return `${Math.round(h)}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+async function loadStories() {
+  const feed  = document.getElementById("feed-select").value;
+  const count = parseInt(document.getElementById("count-select").value);
+  colorMode = document.getElementById("color-select").value;
+
+  showLoading(true);
+  document.getElementById("load-btn").disabled = true;
+  stories = [];
+  selectedId = null;
+  clearSidebar();
+
+  try {
+    const ids = await fetch(`${HN}/${feed}.json`).then(r => r.json());
+    const slice = ids.slice(0, count);
+    let done = 0;
+
+    const results = await Promise.all(slice.map(async (id, i) => {
+      const item = await fetch(`${HN}/item/${id}.json`).then(r => r.json());
+      done++;
+      document.getElementById("loading-msg").textContent =
+        `Loading ${done}/${slice.length}…`;
+      if (!item || item.type !== "story") return null;
+      return {
+        id:       item.id,
+        rank:     i + 1,
+        title:    item.title || "",
+        url:      item.url || "",
+        domain:   domainOf(item.url),
+        score:    item.score || 0,
+        comments: item.descendants || 0,
+        by:       item.by || "",
+        time:     item.time || 0,
+        age:      ageHours(item.time || 0),
+        kids:     (item.kids || []).length,
+      };
+    }));
+
+    stories = results.filter(Boolean);
+    maxScore    = d3.max(stories, d => d.score)    || 1;
+    maxComments = d3.max(stories, d => d.comments) || 1;
+    maxAge      = d3.max(stories, d => d.age)      || 1;
+
+    document.getElementById("stats").textContent =
+      `${stories.length} stories · max score ${maxScore}`;
+
+    renderScatter();
+  } catch(e) {
+    document.getElementById("loading-msg").textContent = "Error: " + e.message;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  showLoading(false);
+  document.getElementById("load-btn").disabled = false;
+}
+
+function dotColor(d) {
+  if (colorMode === "score") {
+    return d3.interpolateYlOrRd(d.score / maxScore);
+  }
+  if (colorMode === "ratio") {
+    const r = d.score > 0 ? d.comments / d.score : 0;
+    const maxR = d3.max(stories, s => s.score > 0 ? s.comments / s.score : 0) || 1;
+    return d3.interpolatePuBu(r / maxR);
+  }
+  // age: young = orange, middle = blue, old = dark
+  const t = d.age / maxAge;
+  return t < 0.5
+    ? d3.interpolateRgb("#f97316", "#6c8fff")(t * 2)
+    : d3.interpolateRgb("#6c8fff", "#334266")((t - 0.5) * 2);
+}
+
+function renderScatter() {
+  const svg = d3.select("#scatter");
+  svg.selectAll("*").remove();
+
+  const W = svg.node().clientWidth  || 600;
+  const H = svg.node().clientHeight || 400;
+  const w = W - margin.left - margin.right;
+  const h = H - margin.top  - margin.bottom;
+
+  xScale = d3.scaleLinear([0, maxScore    * 1.08], [0, w]);
+  yScale = d3.scaleLinear([0, maxComments * 1.08], [h, 0]);
+  radiusScale = d3.scaleSqrt([0, maxScore], [3, 14]);
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Diagonal reference line — clamp to visible axis extents
+  const xMax = xScale.domain()[1];
+  const yMax = yScale.domain()[1];
+  const diagEnd = Math.min(xMax, yMax);
+  g.append("line").attr("class", "diagonal")
+    .attr("x1", xScale(0)).attr("y1", yScale(0))
+    .attr("x2", xScale(diagEnd)).attr("y2", yScale(diagEnd));
+
+  // Quadrant labels
+  const midX = w * 0.5, midY = h * 0.5;
+  [
+    { x: w * 0.75, y: h * 0.15, text: "controversial" },
+    { x: w * 0.75, y: h * 0.85, text: "popular + quiet" },
+    { x: w * 0.2,  y: h * 0.15, text: "niche discussion" },
+    { x: w * 0.2,  y: h * 0.85, text: "low signal" },
+  ].forEach(q => {
+    g.append("text").attr("class", "quadrant-label")
+      .attr("x", q.x).attr("y", q.y)
+      .attr("text-anchor", "middle")
+      .text(q.text);
+  });
+
+  // Axes
+  const xAxis = d3.axisBottom(xScale).ticks(6).tickSize(-h);
+  const yAxis = d3.axisLeft(yScale).ticks(5).tickSize(-w);
+
+  g.append("g").attr("class", "axis").attr("transform", `translate(0,${h})`).call(xAxis)
+    .selectAll(".tick line").attr("stroke", "rgba(255,255,255,0.04)");
+  g.append("g").attr("class", "axis").call(yAxis)
+    .selectAll(".tick line").attr("stroke", "rgba(255,255,255,0.04)");
+
+  g.append("text").attr("class", "axis-label")
+    .attr("x", w / 2).attr("y", h + 40).attr("text-anchor", "middle")
+    .text("Score (upvotes)");
+  g.append("text").attr("class", "axis-label")
+    .attr("transform", "rotate(-90)")
+    .attr("x", -h / 2).attr("y", -48).attr("text-anchor", "middle")
+    .text("Comments");
+
+  // Dots
+  const tooltip = d3.select("body").select("#tt-tooltip").empty()
+    ? d3.select("body").append("div").attr("id", "tt-tooltip")
+        .style("position","fixed").style("pointer-events","none")
+        .style("background","#1a1e2a").style("border","1px solid rgba(255,255,255,0.12)")
+        .style("border-radius","6px").style("padding","6px 10px")
+        .style("font-size","11px").style("color","#e2e4ec")
+        .style("font-family","monospace").style("max-width","220px")
+        .style("line-height","1.5").style("opacity","0").style("z-index","999")
+        .style("transition","opacity .1s")
+    : d3.select("#tt-tooltip");
+
+  g.selectAll(".dot")
+    .data(stories, d => d.id)
+    .join("circle")
+    .attr("class", d => `dot${d.id === selectedId ? " selected" : ""}`)
+    .attr("cx", d => xScale(d.score))
+    .attr("cy", d => yScale(d.comments))
+    .attr("r",  d => radiusScale(d.score))
+    .attr("fill", d => dotColor(d))
+    .attr("opacity", .85)
+    .on("mousemove", (e, d) => {
+      tooltip
+        .style("opacity","1")
+        .style("left", (e.clientX + 14) + "px")
+        .style("top",  (e.clientY - 10) + "px")
+        .html(`<b>${d.title.slice(0,60)}${d.title.length>60?"…":""}</b><br>
+               Score: ${d.score} · Comments: ${d.comments}<br>
+               ${d.domain} · ${fmtAge(d.age)}`);
+    })
+    .on("mouseleave", () => tooltip.style("opacity","0"))
+    .on("click", (e, d) => selectStory(d));
+
+  // Labels for top stories only
+  const topN = stories
+    .slice().sort((a, b) => (b.score + b.comments) - (a.score + a.comments))
+    .slice(0, 8);
+
+  g.selectAll(".story-label")
+    .data(topN, d => d.id)
+    .join("text")
+    .attr("class", "story-label")
+    .attr("x", d => xScale(d.score) + radiusScale(d.score) + 3)
+    .attr("y", d => yScale(d.comments) + 4)
+    .text(d => d.title.slice(0, 28) + (d.title.length > 28 ? "…" : ""));
+}
+
+const LEGEND_GRADIENTS = {
+  age:   { css: "linear-gradient(to right, #f97316, #6c8fff, #334266)", label: "Age: young (orange) → old (dark)" },
+  score: { css: "linear-gradient(to right, #ffffb2, #fd8d3c, #bd0026)",  label: "Score: low → high" },
+  ratio: { css: "linear-gradient(to right, #f7fcfd, #6baed6, #08306b)",  label: "Comments/score ratio: low → high" },
+};
+
+function recolor() {
+  colorMode = document.getElementById("color-select").value;
+  d3.select("#scatter").selectAll(".dot")
+    .transition().duration(400)
+    .attr("fill", d => dotColor(d));
+  const lg = LEGEND_GRADIENTS[colorMode];
+  document.querySelector(".legend-gradient").style.background = lg.css;
+  document.querySelector(".legend-gradient").nextSibling.textContent = lg.label;
+}
+
+
+
+function selectStory(d) {
+  selectedId = d.id;
+  d3.select("#scatter").selectAll(".dot")
+    .classed("selected", s => s.id === d.id);
+
+  const ratio      = d.score > 0 ? (d.comments / d.score).toFixed(2) : "—";
+  const rankColor  = d.rank <= 10 ? "var(--orange)" : d.rank <= 25 ? "var(--amber)" : "var(--muted)";
+  const diagDiff   = d.comments - d.score;
+  const posLabel   = diagDiff > 50  ? ["above diagonal", "var(--orange)", "discussion-heavy"] :
+                     diagDiff < -50 ? ["below diagonal", "var(--blue)",   "popular & quiet"] :
+                                      ["on diagonal",    "var(--green)",  "balanced"];
+
+  document.getElementById("story-rank").innerHTML =
+    `<span style="color:${rankColor}">Rank #${d.rank}</span> · ${fmtAge(d.age)}`;
+  document.getElementById("story-title").textContent  = d.title;
+  document.getElementById("story-title").style.color  = "var(--text)";
+  document.getElementById("story-domain").textContent = d.domain !== "text" ? `↗ ${d.domain}` : "text post";
+
+  document.getElementById("story-meta").innerHTML = `
+    <div class="meta-row"><span>Score</span><span class="meta-val">${d.score}</span></div>
+    <div class="meta-row"><span>Comments</span><span class="meta-val">${d.comments}</span></div>
+    <div class="meta-row"><span>Comment/score ratio</span><span class="meta-val">${ratio}</span></div>
+    <div class="meta-row"><span>Author</span><span class="meta-val">${d.by}</span></div>
+    <div class="meta-row"><span>Posted</span><span class="meta-val">${fmtAge(d.age)}</span></div>
+    <div class="meta-row" style="margin-top:4px">
+      <span>Position</span>
+      <span class="meta-badge" style="background:rgba(255,255,255,.06);color:${posLabel[1]}">${posLabel[0]}</span>
+    </div>
+    <div style="font-size:10px;color:${posLabel[1]};margin-top:2px">${posLabel[2]}</div>
+  `;
+
+  document.getElementById("story-bar-wrap").innerHTML = `
+    <div class="bar-label">Score vs max (${maxScore})</div>
+    <div class="bar-track"><div class="bar-fill" style="width:${(d.score/maxScore*100).toFixed(1)}%;background:var(--orange)"></div></div>
+    <div class="bar-label">Comments vs max (${maxComments})</div>
+    <div class="bar-track"><div class="bar-fill" style="width:${(d.comments/maxComments*100).toFixed(1)}%;background:var(--blue)"></div></div>
+    <div class="bar-label">Age vs oldest (${Math.round(maxAge)}h)</div>
+    <div class="bar-track"><div class="bar-fill" style="width:${(d.age/maxAge*100).toFixed(1)}%;background:var(--purple)"></div></div>
+  `;
+
+  const hnLink  = `https://news.ycombinator.com/item?id=${d.id}`;
+  const actDiv  = document.getElementById("story-actions");
+  actDiv.style.borderTop = "1px solid var(--border)";
+  actDiv.innerHTML = `
+    <a href="${hnLink}" target="_blank">
+      <button style="width:100%">↗ HN thread</button>
+    </a>
+    ${d.url ? `<a href="${d.url}" target="_blank"><button style="width:100%">↗ Article</button></a>` : ""}
+  `;
+}
+
+function clearSidebar() {
+  document.getElementById("story-rank").textContent  = "Select a story";
+  document.getElementById("story-rank").style.color  = "var(--muted)";
+  document.getElementById("story-title").textContent = "Click any dot on the scatter plot to see full details here.";
+  document.getElementById("story-title").style.color = "var(--muted)";
+  document.getElementById("story-domain").textContent = "";
+  document.getElementById("story-meta").innerHTML    = "";
+  document.getElementById("story-bar-wrap").innerHTML = "";
+  document.getElementById("story-actions").innerHTML  = "";
+}
+
+window.addEventListener("load", () => {
+  showLoading(false);
+  loadStories();
+});
+
+window.addEventListener("resize", () => {
+  if (stories.length) { renderScatter(); }
+});
+</script>
+</body>
+</html>

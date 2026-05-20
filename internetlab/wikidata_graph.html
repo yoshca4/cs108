@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wikidata Entity Graph</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+:root {
+  --bg:#0b0d12; --bg2:#11141c; --surface:#181c28;
+  --border:rgba(255,255,255,0.08); --text:#e2e4ec; --muted:#6b7080;
+  --accent:#34d399; --hot:#f97316; --selected:#fbbf24;
+}
+body { background:var(--bg); color:var(--text); font-family:'SF Mono','Fira Code',monospace; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+#toolbar { display:flex; align-items:center; gap:10px; padding:10px 16px; background:var(--bg2); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
+#toolbar h1 { font-size:13px; font-weight:600; color:var(--accent); letter-spacing:.08em; text-transform:uppercase; }
+input[type=text] { background:var(--surface); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:inherit; font-size:13px; padding:5px 10px; outline:none; width:180px; }
+input[type=text]:focus { border-color:var(--accent); }
+button { background:var(--accent); border:none; border-radius:6px; color:#0b0d12; cursor:pointer; font-family:inherit; font-size:12px; font-weight:700; letter-spacing:.05em; padding:6px 14px; text-transform:uppercase; }
+button.sec { background:var(--surface); color:var(--muted); border:1px solid var(--border); }
+button:hover { opacity:.85; } button:disabled { opacity:.3; cursor:not-allowed; }
+select { background:var(--surface); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:inherit; font-size:12px; padding:5px 8px; outline:none; }
+label { font-size:12px; color:var(--muted); }
+#stats { font-size:11px; color:var(--muted); margin-left:auto; }
+#main { display:flex; flex:1; overflow:hidden; }
+#canvas-wrap { flex:1; position:relative; overflow:hidden; }
+svg#graph { width:100%; height:100%; }
+.link { fill:none; }
+.link-arrow { fill:none; }
+.link-label { font-family:inherit; fill:var(--muted); font-size:9px; pointer-events:none; }
+.node-circle { cursor:pointer; }
+.node-circle:hover { filter:brightness(1.3); }
+.node-circle.selected { stroke:#fff; stroke-width:2.5; }
+.node-label { pointer-events:none; text-anchor:middle; font-family:inherit; }
+#sidebar { width:300px; background:var(--bg2); border-left:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; }
+#sb-header { padding:12px 16px 8px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }
+#sb-qid { font-size:10px; color:var(--muted); padding:10px 16px 0; }
+#sb-name { font-size:17px; font-weight:700; padding:2px 16px 0; color:var(--text); line-height:1.3; }
+#sb-desc { font-size:11px; color:var(--muted); padding:4px 16px 8px; font-style:italic; line-height:1.5; border-bottom:1px solid var(--border); }
+#sb-props { flex:1; overflow-y:auto; padding:8px 16px; }
+#sb-props::-webkit-scrollbar { width:4px; }
+#sb-props::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+.prop-group-title { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin:10px 0 5px; }
+.prop-item { display:flex; align-items:flex-start; gap:8px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,.04); }
+.prop-label { font-size:10px; color:var(--muted); width:100px; flex-shrink:0; line-height:1.5; padding-top:1px; }
+.prop-value { font-size:11px; color:var(--text); flex:1; line-height:1.5; cursor:pointer; }
+.prop-value:hover { color:var(--accent); }
+.prop-value.expandable { color:var(--accent); }
+#expand-wrap { padding:10px 16px; border-top:1px solid var(--border); flex-shrink:0; }
+#expand-wrap button { width:100%; font-size:11px; padding:7px; }
+#wb-link { padding:6px 16px 10px; flex-shrink:0; }
+#wb-link a { font-size:11px; color:var(--accent); text-decoration:none; }
+#legend { padding:10px 16px; border-top:1px solid var(--border); flex-shrink:0; font-size:11px; color:var(--muted); line-height:1.7; }
+.leg-row { display:flex; align-items:center; gap:8px; }
+.leg-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+#loading { position:absolute; inset:0; background:rgba(11,13,18,.88); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; font-size:13px; color:var(--muted); z-index:10; }
+#loading.hidden { display:none; }
+.spin { width:26px; height:26px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <h1>🔷 Wikidata Graph</h1>
+  <input id="seed-input" type="text" value="Marie Curie" placeholder="Any concept, person, place…" />
+  <label>Properties:</label>
+  <select id="prop-set">
+    <option value="core">Core (fast)</option>
+    <option value="rich" selected>Rich</option>
+    <option value="all">All (slow)</option>
+  </select>
+  <button id="start-btn" onclick="startGraph()">▶ Start</button>
+  <button class="sec" onclick="resetGraph()">Reset</button>
+  <span id="stats"></span>
+</div>
+<div id="main">
+  <div id="canvas-wrap">
+    <svg id="graph">
+      <defs>
+        <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+          <polygon points="0 0, 6 2, 0 4" fill="rgba(255,255,255,0.25)" />
+        </marker>
+      </defs>
+    </svg>
+    <div id="loading"><div class="spin"></div><span id="load-msg">Enter any concept and click Start.</span></div>
+  </div>
+  <div id="sidebar">
+    <div id="sb-header">Entity details</div>
+    <div id="sb-qid" style="display:none"></div>
+    <div id="sb-name" style="color:var(--muted);font-size:13px;padding-top:16px">Click any node</div>
+    <div id="sb-desc"></div>
+    <div id="sb-props">
+      <p style="font-size:12px;color:var(--muted);margin-top:8px">Start a graph then click a node to explore its Wikidata properties.</p>
+    </div>
+    <div id="expand-wrap" style="display:none">
+      <button id="exp-btn" onclick="expandSelected()">+ Expand this entity</button>
+    </div>
+    <div id="wb-link" style="display:none">
+      <a id="wb-anchor" href="#" target="_blank">↗ Open in Wikidata</a>
+    </div>
+    <div id="legend">
+      <div class="leg-row"><div class="leg-dot" style="background:#34d399"></div>Person</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#60a5fa"></div>Place / Organization</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#f97316"></div>Concept / Work</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#a78bfa"></div>Other entity</div>
+    </div>
+  </div>
+</div>
+<script>
+const WD_API    = "https://www.wikidata.org/w/api.php";
+const WD_SPARQL = "https://query.wikidata.org/sparql";
+
+// Property groups — each entry: [PID, display label]
+const PROP_SETS = {
+  core: [
+    ["P31",  "instance of"],
+    ["P279", "subclass of"],
+    ["P17",  "country"],
+    ["P131", "located in"],
+    ["P19",  "place of birth"],
+    ["P20",  "place of death"],
+    ["P569", "born"],
+    ["P570", "died"],
+    ["P21",  "sex/gender"],
+  ],
+  rich: [
+    ["P31",  "instance of"],
+    ["P279", "subclass of"],
+    ["P17",  "country"],
+    ["P131", "located in"],
+    ["P19",  "place of birth"],
+    ["P20",  "place of death"],
+    ["P569", "born"],
+    ["P570", "died"],
+    ["P21",  "sex/gender"],
+    ["P106", "occupation"],
+    ["P27",  "citizenship"],
+    ["P69",  "educated at"],
+    ["P108", "employer"],
+    ["P22",  "father"],
+    ["P25",  "mother"],
+    ["P26",  "spouse"],
+    ["P40",  "child"],
+    ["P166", "award received"],
+    ["P800", "notable work"],
+    ["P101", "field of work"],
+    ["P585", "point in time"],
+    ["P571", "inception"],
+    ["P576", "dissolved"],
+    ["P710", "participant"],
+    ["P50",  "author"],
+    ["P57",  "director"],
+    ["P161", "cast member"],
+    ["P86",  "composer"],
+    ["P175", "performer"],
+    ["P495", "country of origin"],
+    ["P264", "record label"],
+    ["P136", "genre"],
+  ],
+  all: null,  // handled specially
+};
+
+// Which PIDs should create expandable graph nodes
+const GRAPH_PIDS = new Set([
+  "P31","P279","P17","P131","P19","P20","P106","P27","P69",
+  "P108","P22","P25","P26","P40","P166","P800","P101","P710",
+  "P50","P57","P161","P86","P175","P495","P264","P136","P921",
+]);
+
+// Entity type → color
+function entityColor(instanceOf=[]) {
+  const flat = instanceOf.map(s=>s.toLowerCase()).join(" ");
+  if (/human|person|researcher|politician|scientist|artist|musician|writer|athlete/.test(flat)) return "#34d399";
+  if (/country|city|place|location|organization|university|company|institution/.test(flat)) return "#60a5fa";
+  if (/film|book|album|song|painting|work|award|prize/.test(flat)) return "#f97316";
+  return "#a78bfa";
+}
+
+let nodes=[], links=[], nodeMap=new Map();
+let selectedNode=null;
+let simulation, svg, g, gLinks, gNodes;
+let propSet = "rich";
+
+function showLoad(on, msg) {
+  document.getElementById("loading").classList.toggle("hidden", !on);
+  if (msg) document.getElementById("load-msg").textContent = msg;
+}
+function updateStats() {
+  document.getElementById("stats").textContent =
+    `${nodes.length} entities · ${links.length} relationships`;
+}
+
+// ── Wikidata API ─────────────────────────────────────────────────────────────
+
+async function searchEntity(query) {
+  const p = new URLSearchParams({
+    action:"wbsearchentities", search:query, language:"en",
+    limit:5, format:"json", origin:"*"
+  });
+  const r = await fetch(`${WD_API}?${p}`);
+  const d = await r.json();
+  return (d.search||[])[0] || null;
+}
+
+async function getEntityData(qid) {
+  const p = new URLSearchParams({
+    action:"wbgetentities", ids:qid, languages:"en",
+    props:"labels|descriptions|claims", format:"json", origin:"*"
+  });
+  const r = await fetch(`${WD_API}?${p}`);
+  const d = await r.json();
+  return d.entities?.[qid] || null;
+}
+
+async function resolveQids(qids) {
+  if (!qids.length) return {};
+  const p = new URLSearchParams({
+    action:"wbgetentities", ids:qids.join("|"), languages:"en",
+    props:"labels|descriptions|claims", format:"json", origin:"*"
+  });
+  const r = await fetch(`${WD_API}?${p}`);
+  const d = await r.json();
+  return d.entities || {};
+}
+
+function extractClaims(entity, pids) {
+  const claims = entity.claims || {};
+  const result = [];
+  const target = pids || Object.keys(claims);
+  target.forEach(pid => {
+    const vals = claims[pid] || [];
+    vals.forEach(v => {
+      const ds = v.mainsnak?.datavalue;
+      if (!ds) return;
+      if (ds.type === "wikibase-entityid") {
+        result.push({ pid, type:"entity", qid: ds.value.id });
+      } else if (ds.type === "time") {
+        result.push({ pid, type:"time", value: ds.value.time?.slice(1,11) || "" });
+      } else if (ds.type === "string" || ds.type === "monolingualtext") {
+        result.push({ pid, type:"string", value: ds.value?.text || ds.value || "" });
+      } else if (ds.type === "quantity") {
+        result.push({ pid, type:"quantity", value: ds.value.amount });
+      }
+    });
+  });
+  return result;
+}
+
+// ── Graph construction ───────────────────────────────────────────────────────
+
+function addNode(qid, data) {
+  if (nodeMap.has(qid)) { Object.assign(nodeMap.get(qid), data); return nodeMap.get(qid); }
+  const n = { id:qid, qid, ...data, expanded:false, instanceOf:[] };
+  nodes.push(n);
+  nodeMap.set(qid, n);
+  return n;
+}
+
+function addLink(sourceId, targetId, pid, label) {
+  const key = `${sourceId}→${targetId}→${pid}`;
+  if (!links.some(l => l.key===key))
+    links.push({ source:sourceId, target:targetId, pid, label, key });
+}
+
+async function expandEntity(node) {
+  if (node.expanded) return;
+  node.expanded = true;
+  showLoad(true, `Fetching Wikidata: ${node.name}…`);
+
+  const raw = await getEntityData(node.qid);
+  if (!raw) return;
+
+  node.description = raw.descriptions?.en?.value || "";
+  node.name        = raw.labels?.en?.value || node.name;
+
+  const pids = PROP_SETS[propSet] || null;
+  const pidList = pids ? pids.map(([p])=>p) : null;
+  const claims  = extractClaims(raw, pidList);
+  const propMap = Object.fromEntries((PROP_SETS[propSet]||[]).map(([p,l])=>[p,l]));
+
+  // Resolve entity QIDs in batch
+  const entityClaims = claims.filter(c=>c.type==="entity");
+  const uniqueQids   = [...new Set(entityClaims.map(c=>c.qid))].slice(0, 30);
+  const resolved     = await resolveQids(uniqueQids);
+
+  const allProps = [];
+
+  claims.forEach(c => {
+    const label = propMap[c.pid] || c.pid;
+    if (c.type === "entity" && resolved[c.qid]) {
+      const ent  = resolved[c.qid];
+      const name = ent.labels?.en?.value || c.qid;
+      const desc = ent.descriptions?.en?.value || "";
+      const inst = extractClaims(ent, ["P31"])
+        .filter(x=>x.type==="entity").map(x=>resolved[x.qid]?.labels?.en?.value||"");
+
+      allProps.push({ pid:c.pid, label, type:"entity", qid:c.qid, name, desc, instanceOf:inst });
+
+      if (GRAPH_PIDS.has(c.pid)) {
+        addNode(c.qid, { name, description:desc, instanceOf:inst });
+        addLink(node.qid, c.qid, c.pid, label);
+      }
+
+      if (c.pid === "P31") node.instanceOf.push(name);
+    } else if (c.type !== "entity") {
+      allProps.push({ pid:c.pid, label, type:c.type, value:c.value });
+    }
+  });
+
+  node.allProps = allProps;
+  node.color    = entityColor(node.instanceOf);
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+
+function initSvg() {
+  const el = document.getElementById("graph");
+  // Preserve the defs/arrowhead marker
+  const defs = el.querySelector("defs");
+  el.innerHTML = "";
+  if (defs) el.appendChild(defs);
+
+  svg = d3.select(el);
+  const W = el.clientWidth, H = el.clientHeight;
+
+  const zoom = d3.zoom().scaleExtent([0.1,4])
+    .on("zoom", e => g.attr("transform", e.transform));
+  svg.call(zoom);
+
+  g      = svg.append("g");
+  gLinks = g.append("g");
+  gNodes = g.append("g");
+
+  simulation = d3.forceSimulation()
+    .force("link",  d3.forceLink().id(d=>d.id).distance(100).strength(0.35))
+    .force("charge", d3.forceManyBody().strength(-260).distanceMax(360))
+    .force("center", d3.forceCenter(W/2, H/2))
+    .force("collision", d3.forceCollide().radius(d=>nodeRadius(d)+6))
+    .alphaDecay(0.022)
+    .on("tick", ticked);
+}
+
+function nodeRadius(d) {
+  return d.id === nodes[0]?.id ? 18 : d.expanded ? 13 : 9;
+}
+
+function getColor(d) {
+  if (d.id === selectedNode?.id) return "var(--selected)";
+  return d.color || "#a78bfa";
+}
+
+function updateViz() {
+  // Links with arrowheads
+  const linkSel = gLinks.selectAll(".link-g")
+    .data(links, d => d.key)
+    .join(enter => {
+      const lg = enter.append("g").attr("class","link-g");
+      lg.append("line").attr("class","link")
+        .attr("marker-end","url(#arrowhead)")
+        .attr("stroke","rgba(255,255,255,0.12)")
+        .attr("stroke-width",1);
+      lg.append("text").attr("class","link-label").attr("text-anchor","middle");
+      return lg;
+    });
+
+  linkSel.select(".link-label").text(d => d.label || "");
+
+  // Nodes
+  const nodeUpdate = gNodes.selectAll(".node-g")
+    .data(nodes, d => d.id);
+
+  const entered = nodeUpdate.enter().append("g").attr("class","node-g")
+    .call(d3.drag()
+      .on("start",(e,d)=>{ if(!e.active) simulation.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+      .on("drag", (e,d)=>{ d.fx=e.x; d.fy=e.y; })
+      .on("end",  (e,d)=>{ if(!e.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; }))
+    .on("click", (e,d) => selectNode(d));
+
+  entered.append("circle").attr("class","node-circle");
+  entered.append("text").attr("class","node-label");
+
+  const merged = entered.merge(nodeUpdate);
+
+  merged.select(".node-circle")
+    .attr("r",    d => nodeRadius(d))
+    .attr("fill", d => getColor(d))
+    .attr("opacity", 0.85)
+    .classed("selected", d => d.id===selectedNode?.id);
+
+  merged.select(".node-label")
+    .attr("dy", d => nodeRadius(d)+11)
+    .attr("font-size", 10)
+    .attr("fill","var(--muted)")
+    .text(d => d.name?.length > 18 ? d.name.slice(0,16)+"…" : (d.name||d.qid));
+
+  nodeUpdate.exit().remove();
+
+  simulation.nodes(nodes);
+  simulation.force("link").links(links);
+  simulation.alpha(0.3).restart();
+  updateStats();
+}
+
+function ticked() {
+  gLinks.selectAll(".link-g").each(function(d) {
+    const s = d.source, t = d.target;
+    if (!s.x || !t.x) return;
+    // Shorten line to not overlap node circles
+    const dx = t.x-s.x, dy = t.y-s.y;
+    const dist = Math.sqrt(dx*dx+dy*dy) || 1;
+    const tr = nodeRadius(t)+2;
+    const x2 = t.x - (dx/dist)*tr, y2 = t.y - (dy/dist)*tr;
+    d3.select(this).select("line")
+      .attr("x1",s.x).attr("y1",s.y).attr("x2",x2).attr("y2",y2);
+    d3.select(this).select("text")
+      .attr("x",(s.x+x2)/2).attr("y",(s.y+y2)/2 - 4);
+  });
+  gNodes.selectAll(".node-g")
+    .attr("transform", d=>`translate(${d.x||0},${d.y||0})`);
+}
+
+// ── Sidebar ──────────────────────────────────────────────────────────────────
+
+function selectNode(d) {
+  selectedNode = d;
+  gNodes.selectAll(".node-circle")
+    .attr("fill", n => getColor(n))
+    .classed("selected", n => n.id===d.id);
+
+  document.getElementById("sb-qid").style.display = "block";
+  document.getElementById("sb-qid").textContent = d.qid;
+  document.getElementById("sb-name").textContent = d.name || d.qid;
+  document.getElementById("sb-name").style.color = "var(--text)";
+  document.getElementById("sb-desc").textContent = d.description || "";
+
+  const propsEl = document.getElementById("sb-props");
+  propsEl.innerHTML = "";
+
+  if (d.allProps?.length) {
+    // Group props by label
+    const grouped = {};
+    d.allProps.forEach(p => {
+      if (!grouped[p.label]) grouped[p.label] = [];
+      grouped[p.label].push(p);
+    });
+
+    Object.entries(grouped).forEach(([label, vals]) => {
+      const title = document.createElement("div");
+      title.className = "prop-group-title";
+      title.textContent = label;
+      propsEl.appendChild(title);
+
+      vals.slice(0,5).forEach(v => {
+        const row = document.createElement("div");
+        row.className = "prop-item";
+        const inGraph = v.type==="entity" && nodeMap.has(v.qid);
+        row.innerHTML = `
+          <div class="prop-label">${label}</div>
+          <div class="prop-value${inGraph?" expandable":""}">${v.name||v.value||v.qid}</div>`;
+        if (inGraph) {
+          row.querySelector(".prop-value").onclick = () => selectNode(nodeMap.get(v.qid));
+        } else if (v.type==="entity" && v.qid) {
+          row.querySelector(".prop-value").onclick = async () => {
+            const n = addNode(v.qid, { name:v.name, description:v.desc, instanceOf:v.instanceOf||[], color:entityColor(v.instanceOf||[]) });
+            addLink(d.qid, v.qid, v.pid, label);
+            updateViz();
+            selectNode(n);
+          };
+        }
+        propsEl.appendChild(row);
+      });
+    });
+  } else if (!d.expanded) {
+    propsEl.innerHTML = `<p style="font-size:12px;color:var(--muted);margin-top:8px">Expand this entity to load its Wikidata properties.</p>`;
+  } else {
+    propsEl.innerHTML = `<p style="font-size:12px;color:var(--muted);margin-top:8px">No displayable properties found.</p>`;
+  }
+
+  document.getElementById("expand-wrap").style.display = "block";
+  const btn = document.getElementById("exp-btn");
+  btn.disabled    = d.expanded;
+  btn.textContent = d.expanded ? "✓ Already expanded" : "+ Expand this entity";
+
+  document.getElementById("wb-link").style.display = "block";
+  document.getElementById("wb-anchor").href = `https://www.wikidata.org/wiki/${d.qid}`;
+}
+
+async function expandSelected() {
+  if (!selectedNode || selectedNode.expanded) return;
+  document.getElementById("exp-btn").disabled    = true;
+  document.getElementById("exp-btn").textContent = "Expanding…";
+  await expandEntity(selectedNode);
+  showLoad(false);
+  updateViz();
+  selectNode(selectedNode);
+}
+
+async function startGraph() {
+  const query = document.getElementById("seed-input").value.trim();
+  propSet     = document.getElementById("prop-set").value;
+  if (!query) return;
+
+  document.getElementById("start-btn").disabled = true;
+  nodes=[]; links=[]; nodeMap=new Map(); selectedNode=null;
+  showLoad(true, `Searching Wikidata for "${query}"…`);
+  initSvg();
+
+  const result = await searchEntity(query);
+  if (!result) {
+    showLoad(true, "Not found. Try a different name.");
+    document.getElementById("start-btn").disabled = false;
+    return;
+  }
+
+  const seed = addNode(result.id, { name:result.label||result.id, description:result.description||"" });
+  await expandEntity(seed);
+  showLoad(false);
+  updateViz();
+  document.getElementById("start-btn").disabled = false;
+}
+
+function resetGraph() {
+  if (simulation) simulation.stop();
+  nodes=[]; links=[]; nodeMap=new Map(); selectedNode=null;
+  const el = document.getElementById("graph");
+  const defs = el.querySelector("defs");
+  el.innerHTML = "";
+  if (defs) el.appendChild(defs);
+  document.getElementById("sb-qid").style.display = "none";
+  document.getElementById("sb-name").textContent = "Click any node";
+  document.getElementById("sb-name").style.color = "var(--muted)";
+  document.getElementById("sb-desc").textContent = "";
+  document.getElementById("sb-props").innerHTML =
+    `<p style="font-size:12px;color:var(--muted);margin-top:8px">Start a graph then click a node to explore its Wikidata properties.</p>`;
+  document.getElementById("expand-wrap").style.display = "none";
+  document.getElementById("wb-link").style.display     = "none";
+  document.getElementById("stats").textContent = "";
+  showLoad(true, "Enter any concept and click Start.");
+}
+
+window.addEventListener("load", () => {
+  initSvg();
+  showLoad(true, "Enter any concept and click Start.");
+});
+</script>
+</body>
+</html>
